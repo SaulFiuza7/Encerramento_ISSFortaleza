@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import scrolledtext, filedialog, messagebox
+from tkinter import scrolledtext, filedialog, messagebox, ttk
 import sys
 import threading
 import time
@@ -11,9 +11,9 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.support.ui import WebDriverWait, Select
+from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException, StaleElementReferenceException
+from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
 # ==============================================================================
 # CONFIGURAÇÕES E FUNÇÕES AUXILIARES
@@ -25,7 +25,7 @@ def registrar_log(mensagem):
     """Registra no arquivo e exibe na tela (via print)"""
     timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     texto = f"[{timestamp}] {mensagem}\n"
-    print(texto.strip()) # O print será capturado pela Interface Gráfica
+    print(texto.strip())
     try:
         os.makedirs(os.path.dirname(ARQUIVO_LOG), exist_ok=True)
         with open(ARQUIVO_LOG, "a", encoding="utf-8") as f:
@@ -34,28 +34,20 @@ def registrar_log(mensagem):
         pass
 
 def clicar_seguro(driver, xpath, timeout=5):
-    """
-    Tenta clicar normalmente. Se falhar, FORÇA o clique via JavaScript.
-    """
     try:
         wait = WebDriverWait(driver, timeout)
-        # 1. Tenta encontrar o elemento
         elemento = wait.until(EC.presence_of_element_located((By.XPATH, xpath)))
-        
-        # 2. Tenta o clique padrão
         try:
             wait.until(EC.element_to_be_clickable((By.XPATH, xpath)))
             elemento.click()
             return True
         except:
-            # 3. SE FALHAR: Super Clique JS
             driver.execute_script("arguments[0].click();", elemento)
             return True
     except:
         return False
 
 def tratar_mensagens_alerta(driver, wait):
-    """Limpa alertas do sistema"""
     print("   [Check] Verificando mensagens/alertas...")
     while True:
         try:
@@ -70,30 +62,40 @@ def tratar_mensagens_alerta(driver, wait):
 # ==============================================================================
 # LÓGICA DA AUTOMAÇÃO (THREAD)
 # ==============================================================================
-def minha_automacao(caminho_planilha, diretorio_notas, modo_headless):
+def minha_automacao(caminho_planilha, diretorio_notas, modo_headless, mes_selecionado, ano_selecionado):
+    
+    # --- 1. CONVERSÃO E DEFINIÇÃO DA COMPETÊNCIA MANUAL ---
+    try:
+        mes_alvo = int(mes_selecionado)
+        ano_alvo = int(ano_selecionado)
+        str_competencia = f"{mes_alvo:02d}.{ano_alvo}"
+        registrar_log(f">>> Competência definida manualmente: {str_competencia}")
+    except ValueError:
+        registrar_log("ERRO CRÍTICO: Mês ou Ano inválidos selecionados.")
+        return
+    # ------------------------------------------------------
+
     print(">>> INICIANDO AUTOMAÇÃO...")
     print(f">>> Modo Invisível: {'ATIVADO' if modo_headless else 'DESATIVADO'}")
     
     if not os.path.exists(caminho_planilha):
-        print(f"ERRO: A planilha não foi encontrada.")
+        registrar_log(f"ERRO: A planilha não foi encontrada.")
         return
 
     if not os.path.exists(diretorio_notas):
         try:
             os.makedirs(diretorio_notas)
         except Exception as e:
-            print(f"ERRO AO CRIAR PASTA DE DESTINO: {e}")
+            registrar_log(f"ERRO AO CRIAR PASTA DE DESTINO: {e}")
             return
 
-    # CARREGAMENTO DA PLANILHA
     try:
         df_empresas = pd.read_excel(caminho_planilha, dtype=str)
         df_empresas.columns = df_empresas.columns.str.strip().str.upper()
     except Exception as e:
-        print(f"ERRO CRÍTICO AO LER PLANILHA: {e}")
+        registrar_log(f"ERRO CRÍTICO AO LER PLANILHA: {e}")
         return
 
-    # LOOP PRINCIPAL
     for index, row in df_empresas.iterrows():
         try:
             NOME_EMPRESA = str(row['NOME']).strip()
@@ -101,25 +103,16 @@ def minha_automacao(caminho_planilha, diretorio_notas, modo_headless):
             LOGIN_CPF = str(row['CPF']).replace(".", "").replace("-", "").strip()
             SENHA_ACESSO = str(row['SENHA']).strip()
         except KeyError as e:
-            print(f"ERRO: Coluna {e} não encontrada na planilha.")
+            registrar_log(f"ERRO: Coluna {e} não encontrada na planilha.")
             return
 
         print(f"\n{'='*60}")
         print(f"EMPRESA {index + 1}/{len(df_empresas)}: {NOME_EMPRESA}")
+        print(f"Competência: {str_competencia}")
         print(f"{'='*60}")
-
-        # --- CÁLCULO DA COMPETÊNCIA ---
-        hoje = date.today()
-        primeiro_dia_mes_atual = hoje.replace(day=1)
-        ultimo_dia_mes_anterior = primeiro_dia_mes_atual - pd.Timedelta(days=1)
         
-        mes_alvo = ultimo_dia_mes_anterior.month
-        ano_alvo = ultimo_dia_mes_anterior.year
-        str_competencia = f"{mes_alvo:02d}.{ano_alvo}"
-        
-        print(f"   -> Competência Alvo: {str_competencia}")
-        
-        pasta_final = os.path.join(diretorio_notas, f"{NOME_EMPRESA} {CNPJ_RAW}", str_competencia)
+        # Garante caminho absoluto e cria pasta
+        pasta_final = os.path.abspath(os.path.join(diretorio_notas, f"{NOME_EMPRESA} {CNPJ_RAW}", str_competencia))
         if not os.path.exists(pasta_final):
             os.makedirs(pasta_final)
 
@@ -128,10 +121,12 @@ def minha_automacao(caminho_planilha, diretorio_notas, modo_headless):
             "download.default_directory": pasta_final,
             "download.prompt_for_download": False,
             "download.directory_upgrade": True,
-            "plugins.always_open_pdf_externally": True,
-            "profile.default_content_settings.popups": 0,
+            "safebrowsing.enabled": True,
+            "safebrowsing.disable_download_protection": True,
+            "profile.default_content_setting_values.automatic_downloads": 1,
             "profile.content_settings.exceptions.automatic_downloads.*.setting": 1,
-            "safebrowsing.enabled": True
+            "profile.default_content_settings.popups": 0,
+            "profile.password_manager_enabled": False,
         }
         
         options = webdriver.ChromeOptions()
@@ -149,7 +144,7 @@ def minha_automacao(caminho_planilha, diretorio_notas, modo_headless):
             driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
             wait = WebDriverWait(driver, 15)
         except Exception as e:
-            print(f"ERRO AO ABRIR CHROME: {e}")
+            registrar_log(f"ERRO AO ABRIR CHROME: {e}")
             return
 
         try:
@@ -206,7 +201,7 @@ def minha_automacao(caminho_planilha, diretorio_notas, modo_headless):
 
             tratar_mensagens_alerta(driver, wait)
 
-            # 3. DOWNLOAD XMLs (NOTAS) - NAVEGAÇÃO SEGURA (MENU + JS)
+            # 3. DOWNLOAD XMLs
             print("3. Baixando Notas (XMLs)...")
             
             if "consultar_nfse" not in driver.current_url:
@@ -216,59 +211,100 @@ def minha_automacao(caminho_planilha, diretorio_notas, modo_headless):
             
             time.sleep(2)
 
+            # === FUNÇÃO DE PAGINAÇÃO APRIMORADA (RESOLVE O PROBLEMA DO 'TOMADOS') ===
+            # === FUNÇÃO DE PAGINAÇÃO BLINDADA 2.0 ===
             def baixar_xmls_paginado():
                 pag = 1
-                ultimo_conteudo_tabela = ""
-
+                
                 while True:
                     try:
-                        # 1. Checkbox "Todos"
+                        # [A] CAPTURA O CONTEÚDO ATUAL PARA COMPARAÇÃO
+                        try:
+                            # Pega a primeira linha de dados para saber se a página mudou
+                            primeira_linha = driver.find_element(By.XPATH, "//tbody/tr[1]").text
+                        except:
+                            primeira_linha = "vazio"
+
+                        # [B] TENTA MARCAR O CHECKBOX "TODOS"
                         if not clicar_seguro(driver, '//*[@id="consultarnfseForm:j_id324"]', timeout=3):
                              try:
                                  chk = driver.find_element(By.XPATH, "//th//input[@type='checkbox']")
                                  driver.execute_script("arguments[0].click();", chk)
                              except:
-                                 print("   -> Nenhuma nota encontrada nesta página.")
-                                 break 
+                                 print(f"   -> Falha ao marcar checkbox na pág {pag} (pode não haver notas).")
+                                 if pag == 1: break 
 
                         time.sleep(1)
                         
-                        # 2. Botão Exportar
+                        # [C] EXPORTAR XML
+                        print(f"   -> Exportando página {pag}...")
                         if not clicar_seguro(driver, "//input[contains(@title, 'Exportar XML')]", timeout=2):
                             clicar_seguro(driver, '//*[@id="consultarnfseForm:j_id321"]/div[1]/input[3]')
 
-                        time.sleep(3)
+                        # Tempo para o download iniciar antes de mudar de página
+                        time.sleep(5) 
 
-                        # --- TRAVA DE SEGURANÇA (LOOP) ---
-                        try:
-                            elemento_tabela = driver.find_element(By.XPATH, "//tbody")
-                            conteudo_atual = elemento_tabela.text[:100]
-                        except:
-                            conteudo_atual = "vazio"
-
-                        if pag > 1 and conteudo_atual == ultimo_conteudo_tabela:
-                            print(f"   -> Página {pag} é igual à anterior. Fim da paginação.")
-                            break
-                        
-                        ultimo_conteudo_tabela = conteudo_atual
-                        # ---------------------------------
-                        
-                        # 3. Paginação
+                        # [D] LÓGICA PARA IR PARA A PRÓXIMA PÁGINA
                         prox = pag + 1
-                        xpath_prox = f"//td[contains(@class, 'rich-datascr-inact') and normalize-space()='{prox}']"
-                        
-                        try:
-                            btn = driver.find_element(By.XPATH, xpath_prox)
-                            driver.execute_script("arguments[0].scrollIntoView();", btn)
-                            driver.execute_script("arguments[0].click();", btn)
-                            print(f"   -> Indo para página {prox}...")
-                            time.sleep(4)
-                            pag = prox
-                        except:
-                            print(f"   -> Fim das páginas.")
+                        print(f"   -> Tentando ir para página {prox}...")
+
+                        # Lista de tentativas para achar o botão (Texto exato ou Seta)
+                        # O segredo aqui é procurar o TEXTO dentro da classe de paginação
+                        xpaths_paginacao = [
+                            f"//td[contains(@class, 'rich-datascr-inact') and normalize-space(text())='{prox}']", # Padrão
+                            f"//table[@class='rich-dtascroller-table']//td[normalize-space(text())='{prox}']",   # Genérico Tabela
+                            f"//td[contains(@class, 'rich-datascr-button') and contains(., '>')]",                # Seta >
+                            f"//td[contains(@class, 'rich-datascr-button') and contains(., '»')]"                 # Seta »
+                        ]
+
+                        clicou = False
+                        for xpath in xpaths_paginacao:
+                            try:
+                                btn = driver.find_element(By.XPATH, xpath)
+                                # Verifica se não está desabilitado (no caso das setas)
+                                classe_pai = btn.find_element(By.XPATH, "./..").get_attribute("class")
+                                if "rich-datascr-button-dsbld" in str(classe_pai):
+                                    continue # Seta desabilitada, ignora
+                                
+                                driver.execute_script("arguments[0].scrollIntoView();", btn)
+                                driver.execute_script("arguments[0].click();", btn)
+                                clicou = True
+                                print(f"   -> Clique realizado no botão '{prox}' ou '>'")
+                                break
+                            except:
+                                continue
+
+                        if not clicou:
+                            print(f"   -> Botão da página {prox} não encontrado. Fim da paginação.")
                             break
+
+                        # [E] ESPERA INTELIGENTE PELA MUDANÇA DE PÁGINA
+                        # Espera até 10 segundos para o texto da primeira linha mudar
+                        tempo_espera = 0
+                        pagina_mudou = False
+                        while tempo_espera < 10:
+                            try:
+                                nova_primeira_linha = driver.find_element(By.XPATH, "//tbody/tr[1]").text
+                                if nova_primeira_linha != primeira_linha:
+                                    pagina_mudou = True
+                                    break
+                            except:
+                                pass # Tabela pode estar recarregando
+                            time.sleep(1)
+                            tempo_espera += 1
+                        
+                        if pagina_mudou:
+                            print(f"   -> Página {prox} carregada com sucesso.")
+                            pag = prox
+                        else:
+                            print(f"   -> A página parece não ter mudado após o clique. Encerrando.")
+                            break
+
                     except Exception as e:
+                        print(f"   -> Erro inesperado na paginação: {e}")
                         break
+            # ================================================================
+            # ======================================================================
 
             # [A] PRESTADOS
             print("   -> Processando Prestados...")
@@ -276,6 +312,7 @@ def minha_automacao(caminho_planilha, diretorio_notas, modo_headless):
             time.sleep(1)
             if clicar_seguro(driver, '//*[@id="consultarnfseForm:competenciaHeader"]/label/div'):
                 time.sleep(1)
+                # Seleção de ano e mês baseada na escolha manual
                 clicar_seguro(driver, f'//*[@id="consultarnfseForm:competenciaDateEditorLayoutY{ano_alvo - 2022}"]')
                 time.sleep(0.5)
                 clicar_seguro(driver, f'//*[@id="consultarnfseForm:competenciaDateEditorLayoutM{mes_alvo - 1}"]')
@@ -343,8 +380,9 @@ def minha_automacao(caminho_planilha, diretorio_notas, modo_headless):
             time.sleep(3)
             
             if clicar_seguro(driver, '//*[@id="manterEscrituracaoForm:dataTablePendentes:0:linkEscriturarPendente"]/span', timeout=5):
-                print("   -> Aberta. Encerrando...")
+                print("   -> Aberta. Realizando Encerramento...")
                 time.sleep(3)
+                
                 if clicar_seguro(driver, '//*[@id="aba_servicos_pendentes_lbl"]', timeout=3):
                     time.sleep(2)
                     clicar_seguro(driver, '//*[@id="servicos_pendentes_form:idLinkaceitarDocTomados"]')
@@ -356,6 +394,7 @@ def minha_automacao(caminho_planilha, diretorio_notas, modo_headless):
                 clicar_seguro(driver, '//*[@id="abaEncerramentoForm:btnEncerrarEscrituracao"]')
                 clicar_seguro(driver, '//*[@id="formEncerramento:btnSim"]')
                 time.sleep(5)
+                print("   -> Escrituração ENCERRADA com sucesso.")
             else:
                 print("   -> Nenhuma pendência encontrada ou já encerrada.")
 
@@ -383,17 +422,15 @@ class LogQueue:
 class App:
     def __init__(self, root):
         self.root = root
-        self.root.title("Robô ISS Fortaleza 2.1")
+        self.root.title("Robô ISS Fortaleza - Versão Final")
         self.root.geometry("750x650")
         self.root.configure(bg="#f0f0f0")
 
         self.log_queue = queue.Queue()
 
-        # --- Frame de Configuração ---
         frame_config = tk.LabelFrame(root, text="Configurações", padx=10, pady=10, bg="#f0f0f0", font=("Arial", 10, "bold"))
         frame_config.pack(padx=10, pady=10, fill=tk.X)
 
-        # 1. Planilha
         tk.Label(frame_config, text="Planilha de Acessos:", bg="#f0f0f0").pack(anchor="w")
         frame_p = tk.Frame(frame_config, bg="#f0f0f0")
         frame_p.pack(fill=tk.X, pady=(0, 5))
@@ -401,27 +438,37 @@ class App:
         tk.Entry(frame_p, textvariable=self.var_planilha, width=50).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0,5))
         tk.Button(frame_p, text="Selecionar...", command=self.selecionar_planilha).pack(side=tk.RIGHT)
 
-        # 2. Página de Download (Antes chamava Pasta Destino)
         tk.Label(frame_config, text="Página de download:", bg="#f0f0f0").pack(anchor="w")
         frame_d = tk.Frame(frame_config, bg="#f0f0f0")
         frame_d.pack(fill=tk.X, pady=(0, 5))
-        
-        # Valor inicia VAZIO, sem pasta padrão
         self.var_destino = tk.StringVar(value="") 
-        
         tk.Entry(frame_d, textvariable=self.var_destino, width=50).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0,5))
         tk.Button(frame_d, text="Selecionar...", command=self.selecionar_pasta_destino).pack(side=tk.RIGHT)
 
-        # 3. Opções Extras (Texto simplificado)
         self.var_headless = tk.BooleanVar(value=False)
         chk_headless = tk.Checkbutton(frame_config, text="Executar em modo invisível", variable=self.var_headless, bg="#f0f0f0", font=("Arial", 9))
         chk_headless.pack(anchor="w", pady=5)
 
-        # --- Botão Iniciar ---
+        # --- CORREÇÃO DO ERRO: SELEÇÃO DE DATA ---
+        # Adicionamos os componentes que estavam faltando
+        frame_data = tk.LabelFrame(frame_config, text="Competência Alvo", bg="#f0f0f0", font=("Arial", 9, "bold"))
+        frame_data.pack(fill=tk.X, pady=5)
+
+        tk.Label(frame_data, text="Mês:", bg="#f0f0f0").pack(side=tk.LEFT, padx=5)
+        self.combo_mes = ttk.Combobox(frame_data, values=[f"{i:02d}" for i in range(1, 13)], width=5, state="readonly")
+        self.combo_mes.pack(side=tk.LEFT, padx=5)
+        self.combo_mes.set(datetime.now().strftime("%m"))
+
+        tk.Label(frame_data, text="Ano:", bg="#f0f0f0").pack(side=tk.LEFT, padx=5)
+        anos_disponiveis = [str(a) for a in range(2023, 2031)]
+        self.combo_ano = ttk.Combobox(frame_data, values=anos_disponiveis, width=8, state="readonly")
+        self.combo_ano.pack(side=tk.LEFT, padx=5)
+        self.combo_ano.set(datetime.now().strftime("%Y"))
+        # ----------------------------------------
+
         self.btn_iniciar = tk.Button(root, text="INICIAR AUTOMAÇÃO", command=self.iniciar_thread, height=2, bg="#0056b3", fg="white", font=("Arial", 12, "bold"))
         self.btn_iniciar.pack(pady=5, padx=10, fill=tk.X)
 
-        # --- Logs ---
         tk.Label(root, text="Logs de Execução:", bg="#f0f0f0", font=("Arial", 10, "bold")).pack(anchor="w", padx=10)
         self.txt_log = scrolledtext.ScrolledText(root, state='disabled', height=15, font=("Consolas", 9))
         self.txt_log.pack(pady=5, padx=10, fill=tk.BOTH, expand=True)
@@ -441,6 +488,10 @@ class App:
         p = self.var_planilha.get()
         d = self.var_destino.get()
         h = self.var_headless.get()
+        
+        # AGORA VAI FUNCIONAR: self.combo_mes JÁ FOI CRIADO NO __INIT__
+        m = self.combo_mes.get()
+        a = self.combo_ano.get()
 
         if not p or not os.path.exists(p):
             messagebox.showwarning("Erro", "Selecione uma planilha válida.")
@@ -449,10 +500,10 @@ class App:
         if not d:
             messagebox.showwarning("Erro", "Selecione a Página de download.")
             return
-        
+
         self.btn_iniciar.config(state=tk.DISABLED, text="Rodando...", bg="#6c757d")
         
-        thread = threading.Thread(target=minha_automacao, args=(p, d, h))
+        thread = threading.Thread(target=minha_automacao, args=(p, d, h, m, a))
         thread.daemon = True
         thread.start()
 
