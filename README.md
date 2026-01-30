@@ -32,8 +32,8 @@ Ferramenta de automação (RPA) desenvolvida em Python para otimizar a rotina fi
 1. **Google Chrome** instalado.
 2. O software exige uma planilha Excel com as seguintes colunas (exatamente como abaixo):
     
-   NOME               |    CNPJ            |      CPF       | SENHA
-   Empresa Teste LTDA | 00.000.000/0001-00 | 123.456.789-00 | senha123
+   NOME   |    CNPJ   |    CPF    | SENHA
+
 
 
 ## 🚀 Como Usar
@@ -46,6 +46,7 @@ Acesse a aba [Releases](https://github.com/SaulFiuza7/Encerramento_ISSFortaleza/
 1. Clone o repositório:
    ```bash
    git clone [https://github.com/SaulFiuza7/Encerramento_ISSFortaleza.git](https://github.com/SaulFiuza7/Encerramento_ISSFortaleza.git)
+
 
 
 
